@@ -34,7 +34,7 @@
 
         <dependency>
             <groupId>${project.groupId}</groupId>
-            <artifactId>sparksql-ml_${scala.binary.version}</artifactId>
+            <artifactId>sparksql-ml_2.12</artifactId>
             <version>${project.version}</version>
             <scope>compile</scope>
         </dependency>

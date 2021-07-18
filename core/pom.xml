@@ -26,7 +26,6 @@
         <maven.surefire.plugin.version>2.22.2</maven.surefire.plugin.version>
 
         <antlr4.maven.plugin.version>4.7</antlr4.maven.plugin.version>
-        <scoverage.plugin.version>1.4.0</scoverage.plugin.version>
         <scalatest.maven.plugin.version>2.0.0</scalatest.maven.plugin.version>
     </properties>
 
@@ -207,11 +206,9 @@
             <plugin>
                 <groupId>org.scoverage</groupId>
                 <artifactId>scoverage-maven-plugin</artifactId>
-                <version>${scoverage.plugin.version}</version>
                 <configuration>
                     <scalaVersion>${scala.version}</scalaVersion>
                     <aggregateOnly>true</aggregateOnly>
-                    <scalaVersion>${scala.version}</scalaVersion>
                     <highlighting>true</highlighting>
                 </configuration>
             </plugin>

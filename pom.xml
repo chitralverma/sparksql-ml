@@ -70,6 +70,7 @@
 
         <scala.maven.plugin.version>4.5.2</scala.maven.plugin.version>
         <nexus.staging.maven.plugin.version>1.6.8</nexus.staging.maven.plugin.version>
+        <scoverage.plugin.version>1.4.0</scoverage.plugin.version>
         <maven.compiler.plugin.version>3.8.1</maven.compiler.plugin.version>
         <maven.deploy.plugin.version>3.0.0-M1</maven.deploy.plugin.version>
         <maven.enforcer.plugin.version>3.0.0-M1</maven.enforcer.plugin.version>
@@ -202,9 +203,9 @@
                             <arg>-deprecation</arg>
                             <arg>-feature</arg>
                             <arg>-explaintypes</arg>
-                            <arg>-target:jvm-${java.version}</arg>
+                            <arg>-Yno-adapted-args</arg>
                             <arg>-Xfatal-warnings</arg>
-                            <arg>-Ywarn-unused:imports</arg>
+                            <arg>-target:jvm-${java.version}</arg>
                             <arg>-P:scapegoat:dataDir:${project.build.directory}</arg>
                             <arg>-P:scapegoat:reports:scalastyle</arg>
                             <arg>
@@ -295,6 +296,12 @@
                 <configuration>
                     <skip>true</skip>
                 </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.scoverage</groupId>
+                <artifactId>scoverage-maven-plugin</artifactId>
+                <version>${scoverage.plugin.version}</version>
             </plugin>
 
             <plugin>
