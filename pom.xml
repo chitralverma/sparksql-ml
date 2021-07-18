@@ -208,9 +208,7 @@
                             <arg>-target:jvm-${java.version}</arg>
                             <arg>-P:scapegoat:dataDir:${project.build.directory}</arg>
                             <arg>-P:scapegoat:reports:scalastyle</arg>
-                            <arg>
-                                -P:scapegoat:overrideLevels:NullParameter=Info:AsInstanceOf=Info:SwallowedException=Info
-                            </arg>
+                            <arg>-P:scapegoat:overrideLevels:AsInstanceOf=Info:SwallowedException=Info</arg>
                         </args>
                         <jvmArgs>
                             <jvmArg>-Xmx1024m</jvmArg>
