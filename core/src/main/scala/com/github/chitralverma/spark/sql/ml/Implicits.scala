@@ -16,20 +16,17 @@
 
 package com.github.chitralverma.spark.sql.ml
 
-import org.antlr.v4.runtime.ParserRuleContext
-import org.antlr.v4.runtime.misc.Interval
-
+import com.github.chitralverma.spark.sql.ml.parser.SparkSqlMLParser
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.internal.StaticSQLConf
 
 object Implicits {
 
   implicit class SparkSessionImplicits(sparkBuilder: SparkSession.Builder) {
 
     def withSqlMLExtensions(): SparkSession.Builder = {
-      sparkBuilder.config(
-        StaticSQLConf.SPARK_SESSION_EXTENSIONS.key,
-        classOf[SparkSqlMLExtensions].getCanonicalName)
+      sparkBuilder.withExtensions { extensions =>
+        extensions.injectParser((_, parser) => new SparkSqlMLParser(parser))
+      }
     }
   }
 
