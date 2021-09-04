@@ -39,9 +39,9 @@
 grammar SparkSqlMLBase;
 import SqlBase;
 
-singleStatement
-    : statement ';'* EOF                        #sparkSQLStatement
-    | mlStatement ';'* EOF                      #sparkSQLMLStatement
+statement
+    : mlStatement                                                                                   #sparkSQLMLStatement
+    | EXPLAIN (LOGICAL | FORMATTED | EXTENDED | CODEGEN | COST)? mlStatement                        #explainMLStatement
     ;
 
 mlStatement

@@ -41,10 +41,12 @@ package com.github.chitralverma.spark.sql.ml.parser
 import com.github.chitralverma.spark.sql.ml.parser.SparkSqlMLBaseParser._
 import org.antlr.v4.runtime.ParserRuleContext
 import org.antlr.v4.runtime.misc.Interval
+import org.antlr.v4.runtime.tree.ParseTree
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.parser.ParserUtils._
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.execution.command.ExplainCommand
 
 import java.util.Locale
 import scala.collection.JavaConverters._
@@ -57,27 +59,35 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
     extends SparkSqlMLBaseBaseVisitor[AnyRef]
     with Logging {
 
+  protected def typedVisit[T](ctx: ParseTree): T =
+    ctx.accept(this).asInstanceOf[T]
+
+  protected def plan(tree: ParserRuleContext): LogicalPlan = typedVisit(tree)
+
   //////////////////////////////////////////////////////////////////////////////////////////////
   // Handling Delegation to default SparkSqlParser
   //////////////////////////////////////////////////////////////////////////////////////////////
 
   /**
-   * Visit a parse tree produced by a SparkSQL query.
-   *
-   * @param ctx the parse tree
-   * @return the visitor result
+   * Create an [[ExplainCommand]] logical plan.
+   * The syntax of using this command in SQL is:
+   * {{{
+   *   EXPLAIN (EXTENDED | CODEGEN) <SparkSqlML Query>
+   * }}}
    */
-  override def visitSparkSQLStatement(ctx: SparkSQLStatementContext): LogicalPlan =
-    visit(ctx.statement()).asInstanceOf[LogicalPlan]
+  override def visitExplainMLStatement(ctx: ExplainMLStatementContext): LogicalPlan = {
+    Option(ctx.FORMATTED).foreach(_ => operationNotAllowed("EXPLAIN FORMATTED", ctx))
+    Option(ctx.LOGICAL).foreach(_ => operationNotAllowed("EXPLAIN LOGICAL", ctx))
 
-  /**
-   * Visit a parse tree produced by a SparkSQL ML query.
-   *
-   * @param ctx the parse tree
-   * @return the visitor result
-   */
-  override def visitSparkSQLMLStatement(ctx: SparkSQLMLStatementContext): LogicalPlan =
-    visit(ctx.mlStatement()).asInstanceOf[LogicalPlan]
+    Option(plan(ctx.mlStatement()))
+      .map(stmt =>
+        ExplainCommand(
+          logicalPlan = stmt,
+          extended = ctx.EXTENDED != null,
+          codegen = ctx.CODEGEN != null,
+          cost = ctx.COST != null))
+      .orNull
+  }
 
   /**
    * A table property key can either be String or a collection of dot separated elements. This
