@@ -61,10 +61,10 @@ class SparkSqlMLParser(val delegate: ParserInterface)
    */
   override def parsePlan(sqlText: String): LogicalPlan =
     parse(sqlText) { parser =>
-      astBuilder.visit(parser.statement()) match {
+      astBuilder.visit(parser.givenStatement()) match {
         case plan: LogicalPlan if plan != null => plan
         case _ =>
-          logDebug("Unsupported SQL statement encountered, delegating to SparkSql.")
+          logDebug("Unsupported SQL statement encountered, delegating to SparkSQLParser.")
           delegate.parsePlan(sqlText)
       }
     }

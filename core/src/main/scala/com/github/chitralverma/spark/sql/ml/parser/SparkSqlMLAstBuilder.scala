@@ -39,17 +39,19 @@
 package com.github.chitralverma.spark.sql.ml.parser
 
 import com.github.chitralverma.spark.sql.ml.parser.SparkSqlMLBaseParser._
+import io.netty.util.internal.StringUtil
 import org.antlr.v4.runtime.ParserRuleContext
 import org.antlr.v4.runtime.misc.Interval
-import org.antlr.v4.runtime.tree.ParseTree
+import org.antlr.v4.runtime.tree.{ParseTree, RuleNode}
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.parser.ParserUtils._
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.command.ExplainCommand
 
 import java.util.Locale
 import scala.collection.JavaConverters._
+import scala.util.{Failure, Success, Try}
 
 /**
  * @groupname estimator_creation Visitor Functions for Estimator Creation
@@ -67,27 +69,79 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
   //////////////////////////////////////////////////////////////////////////////////////////////
   // Handling Delegation to default SparkSqlParser
   //////////////////////////////////////////////////////////////////////////////////////////////
+  /**
+   * Override the default behavior for all visit methods. This will only return a non-null result
+   * when the context has only one child. This is done because there is no generic method to
+   * combine the results of the context children. In all other cases null is returned.
+   */
+  override def visitChildren(node: RuleNode): AnyRef = {
+    if (node.getChildCount == 1) {
+      node.getChild(0).accept(this)
+    } else {
+      null
+    }
+  }
+
+  /**
+   * Enables support of CTEs with SparkSQLML queries and the provided dataset queries.
+   * Create [[With]] logical plan(s) which can alias the results of whole ML Query(-ies) or
+   * it can allow alias data sets for one or more ML queries.
+   *
+   * Some Examples:
+   * @example
+   * {{{ WITH DATA AS (<data set query>) FIT ... TO (SELECT * FROM DATA) ... }}}
+   * {{{ FIT ... TO (WITH DATA AS (<data set query>) SELECT * FROM DATA) ... }}}
+   * {{{ WITH MODEL AS ( FIT ... TO (SELECT * FROM DATA) ... ) SELECT * FROM MODEL }}}
+   */
+  override def visitMlQuery(ctx: MlQueryContext): LogicalPlan =
+    withOrigin(ctx) {
+      val query = delegate.parsePlan(ctx.statement().getOriginalString)
+
+      // Apply CTEs
+      query.optional(ctx.mlCtes()) {
+        val ctes = ctx.mlCtes.mlNamedQuery().asScala.map { nCtx =>
+          val namedQuery = visitMlNamedQuery(nCtx)
+
+          (namedQuery.alias, namedQuery)
+        }
+
+        // Check for duplicate names.
+        checkDuplicateKeys(ctes, ctx)
+        With(query, ctes)
+      }
+    }
+
+  override def visitNamedQuery(ctx: NamedQueryContext): SubqueryAlias = withOrigin(ctx) {
+    SubqueryAlias(ctx.name.getText, delegate.parsePlan(ctx.query().getOriginalString))
+  }
+
+  /**
+   * Creates a [[SubqueryAlias]] for a given aliased (named) query.
+   */
+  override def visitMlNamedQuery(ctx: MlNamedQueryContext): SubqueryAlias =
+    withOrigin(ctx) {
+      SubqueryAlias(ctx.name.getText, plan(ctx.mlStatement()))
+    }
 
   /**
    * Create an [[ExplainCommand]] logical plan.
    * The syntax of using this command in SQL is:
-   * {{{
-   *   EXPLAIN (EXTENDED | CODEGEN) <SparkSqlML Query>
-   * }}}
+   * {{{ EXPLAIN (EXTENDED | CODEGEN) <SparkSQLML Statement> }}}
    */
-  override def visitExplainMLStatement(ctx: ExplainMLStatementContext): LogicalPlan = {
-    Option(ctx.FORMATTED).foreach(_ => operationNotAllowed("EXPLAIN FORMATTED", ctx))
-    Option(ctx.LOGICAL).foreach(_ => operationNotAllowed("EXPLAIN LOGICAL", ctx))
+  override def visitExplainMLStatement(ctx: ExplainMLStatementContext): LogicalPlan =
+    withOrigin(ctx) {
+      Option(ctx.FORMATTED).foreach(_ => operationNotAllowed("EXPLAIN FORMATTED", ctx))
+      Option(ctx.LOGICAL).foreach(_ => operationNotAllowed("EXPLAIN LOGICAL", ctx))
 
-    Option(plan(ctx.mlStatement()))
-      .map(stmt =>
-        ExplainCommand(
-          logicalPlan = stmt,
-          extended = ctx.EXTENDED != null,
-          codegen = ctx.CODEGEN != null,
-          cost = ctx.COST != null))
-      .orNull
-  }
+      Option(plan(ctx.mlStatement()))
+        .map(stmt =>
+          ExplainCommand(
+            logicalPlan = stmt,
+            extended = ctx.EXTENDED != null,
+            codegen = ctx.CODEGEN != null,
+            cost = ctx.COST != null))
+        .orNull
+    }
 
   /**
    * A table property key can either be String or a collection of dot separated elements. This
@@ -130,6 +184,26 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
       checkDuplicateKeys(properties, ctx)
       properties.toMap
     }
+
+  /**
+   * Create a logical plan for a regular (no-insert) query
+   */
+  override def visitQueryNoInsert(queryCtx: QueryNoInsertContext): LogicalPlan = {
+    val dataSetQueryStr = Try(queryCtx.getOriginalString) match {
+      case Failure(exception) =>
+        operationNotAllowed(
+          s"Invalid SQL query provided. Failed with message '${exception.getMessage}'",
+          queryCtx.getParent)
+      case Success(value) if StringUtil.isNullOrEmpty(value) =>
+        operationNotAllowed(
+          "Invalid SQL query provided. Null or Empty values are not allowed.",
+          queryCtx.getParent)
+      case Success(value) if Option(value).isDefined => value
+    }
+
+    logDebug("Delegating the provided dataset query to SparkSQLParser.")
+    delegate.parsePlan(dataSetQueryStr)
+  }
 
   //////////////////////////////////////////////////////////////////////////////////////////////
   // Handling SparkSql-ML queries

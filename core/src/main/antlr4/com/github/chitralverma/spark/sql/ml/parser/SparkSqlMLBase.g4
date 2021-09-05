@@ -39,23 +39,37 @@
 grammar SparkSqlMLBase;
 import SqlBase;
 
-statement
-    : mlStatement                                                                                   #sparkSQLMLStatement
+givenStatement
+    : singleStatement                                                                               #sparkSQLStatement
+    | mlStatement                                                                                   #sparkSQLMLStatement
     | EXPLAIN (LOGICAL | FORMATTED | EXTENDED | CODEGEN | COST)? mlStatement                        #explainMLStatement
     ;
 
 mlStatement
-    : fitEstimatorHeader TO '(' dataSetQuery=queryNoInsert ')'
+    : mlQuery                                                                                       #mlStatementDefault
+    | ctes? fitEstimatorHeader TO '(' dataSetQuery=queryNoInsert ')'
         (WITH OPTIONS options=tablePropertyList)? (WITH HYPERPARAMS hyperParams=tablePropertyList)?
-        storedAtLocation                                                                                   #fitEstimator
+        storedAtLocation                                                                            #fitEstimator
+    ;
+
+mlQuery
+    : mlCtes? statement
+    ;
+
+mlCtes
+    : WITH mlNamedQuery (',' mlNamedQuery)*
+    ;
+
+mlNamedQuery
+    : name=identifier AS? '(' mlStatement ')'
     ;
 
 fitEstimatorHeader
-    : FIT (AND overwrite=REPLACE)? A estimator=STRING ESTIMATOR
+    : FIT (AND overwrite=REPLACE)? estimator=STRING ESTIMATOR
     ;
 
 queryNoInsert
-    : queryTerm queryOrganization
+    : ctes? queryTerm queryOrganization
     ;
 
 storedAtLocation
@@ -66,7 +80,6 @@ storedAtLocation
 // Start of the ML keywords list
 //============================
 FIT: 'FIT';
-A: 'A';
 ESTIMATOR: 'ESTIMATOR';
 HYPERPARAMS: 'HYPERPARAMS';
 DEFAULT: 'DEFAULT';
