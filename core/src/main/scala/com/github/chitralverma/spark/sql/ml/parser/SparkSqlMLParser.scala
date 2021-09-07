@@ -50,7 +50,7 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.sql.types.{DataType, StructType}
 
-case class SparkSqlMLParser(sparkSession: SparkSession, delegate: ParserInterface)
+final case class SparkSqlMLParser(sparkSession: SparkSession, delegate: ParserInterface)
     extends ParserInterface
     with Logging {
 

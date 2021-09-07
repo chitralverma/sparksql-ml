@@ -38,16 +38,19 @@
 
 package com.github.chitralverma.spark.sql.ml.parser
 
+import com.github.chitralverma.spark.sql.ml.execution.plans.Training
 import com.github.chitralverma.spark.sql.ml.parser.SparkSqlMLBaseParser._
 import io.netty.util.internal.StringUtil
 import org.antlr.v4.runtime.ParserRuleContext
 import org.antlr.v4.runtime.misc.Interval
 import org.antlr.v4.runtime.tree.{ParseTree, RuleNode}
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.parser.ParserUtils._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.command.ExplainCommand
+import org.apache.spark.sql.types.StringType
 
 import java.util.Locale
 import scala.collection.JavaConverters._
@@ -186,6 +189,21 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
     }
 
   /**
+   * Parse a key-value map from a [[TablePropertyListContext]], assuming all values are specified.
+   */
+  private def visitPropertyKeyValues(
+    ctx: TablePropertyListContext): Map[String, String] = {
+    val props = visitTablePropertyList(ctx)
+    val badKeys = props.collect { case (key, null) => key }
+    if (badKeys.nonEmpty) {
+      operationNotAllowed(
+        s"Values must be specified for key(s): ${badKeys.mkString("[", ",", "]")}",
+        ctx)
+    }
+    props
+  }
+
+  /**
    * Create a logical plan for a regular (no-insert) query
    */
   override def visitQueryNoInsert(queryCtx: QueryNoInsertContext): LogicalPlan = {
@@ -237,7 +255,58 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
    * @param ctx the parse tree
    */
   override def visitFitEstimator(ctx: FitEstimatorContext): LogicalPlan =
-    withOrigin(ctx)(operationNotAllowed("Not Implemented", ctx))
+    withOrigin(ctx) {
+
+      // Get provided query as logical plan with CTEs
+      val dataset = visitQueryNoInsert(ctx.dataSetQuery).optionalMap(ctx.ctes()) {
+        (ctesContext: CtesContext, datasetQuery: LogicalPlan) =>
+          val ctes = ctesContext.namedQuery().asScala.map { nCtx =>
+            val namedQuery = visitNamedQuery(nCtx)
+            (namedQuery.alias, namedQuery)
+          }
+
+          // Check for duplicate names.
+          checkDuplicateKeys(ctes, ctx)
+          With(datasetQuery, ctes)
+      }
+
+      // Get values for estimator and save mode
+      val (shouldOverwrite, estimatorStr) =
+        visitFitEstimatorHeader(ctx.fitEstimatorHeader())
+
+      // Get any arbitrary options if provided
+      val options = Option(ctx.options).map(visitPropertyKeyValues).getOrElse(Map.empty)
+
+      // Get any hyper parameters if provided
+      val hyperParams =
+        Option(ctx.hyperParams).map(visitPropertyKeyValues).getOrElse(Map.empty)
+
+      // Get value for location
+      val location = Try(string(ctx.storedAtLocation().locationSpec().STRING())) match {
+        case Failure(exception) =>
+          operationNotAllowed(
+            s"Malformed input provided for location. Failed with message '${exception.getMessage}'",
+            ctx)
+        case Success(value) if StringUtil.isNullOrEmpty(value) =>
+          operationNotAllowed(
+            "Malformed input provided for location. Null or Empty values are not allowed.",
+            ctx)
+        case Success(value) => value
+      }
+
+      val outputAttributes = Seq(
+        AttributeReference("model", StringType, nullable = false)(),
+        AttributeReference("model_location", StringType, nullable = false)())
+
+      Training(
+        estimatorStr,
+        dataset,
+        location,
+        shouldOverwrite,
+        options,
+        hyperParams,
+        outputAttributes)
+    }
 
   implicit class ParserRuleContextImplicits(ctx: ParserRuleContext) {
 

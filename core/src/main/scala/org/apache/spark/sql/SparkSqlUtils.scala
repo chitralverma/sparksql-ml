@@ -17,9 +17,25 @@
 package org.apache.spark.sql
 
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.execution.{LogicalRDD, SparkPlan}
 object SparkSqlUtils {
 
-  def getDataFrameFromPlan(sparkSession: SparkSession, plan: LogicalPlan): DataFrame =
+  def getDataFrameFromLogicalPlan(
+    sparkSession: SparkSession,
+    plan: LogicalPlan): DataFrame =
     Dataset.ofRows(sparkSession, plan)
+
+  def getDataFrameFromSparkPlan(
+    sparkSession: SparkSession,
+    plan: SparkPlan,
+    isStreaming: Boolean): DataFrame =
+    getDataFrameFromLogicalPlan(
+      sparkSession,
+      LogicalRDD(
+        plan.output,
+        plan.execute(),
+        plan.outputPartitioning,
+        plan.outputOrdering,
+        isStreaming)(sparkSession))
 
 }

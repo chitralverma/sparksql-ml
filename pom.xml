@@ -383,7 +383,7 @@
                 </configuration>
                 <executions>
                     <execution>
-                        <phase>process-sources</phase>
+                        <phase>validate</phase>
                         <goals>
                             <goal>check</goal>
                         </goals>

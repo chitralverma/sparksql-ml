@@ -14,17 +14,17 @@
  *   limitations under the License.
  */
 
-package com.github.chitralverma.spark.sql.ml
+package com.github.chitralverma.spark.sql.ml.execution.strategies
 
-import com.github.chitralverma.spark.sql.ml.execution.strategies.TrainingStrategy
-import com.github.chitralverma.spark.sql.ml.parser.SparkSqlMLParser
-import org.apache.spark.sql.SparkSessionExtensions
+import com.github.chitralverma.spark.sql.ml.execution.plans.{Training, TrainingExec}
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.execution.{PlanLater, SparkPlan, SparkStrategy}
 
-class SparkSqlMLExtensions extends (SparkSessionExtensions => Unit) {
+final case class TrainingStrategy(spark: SparkSession) extends SparkStrategy {
 
-  override def apply(extensions: SparkSessionExtensions): Unit = {
-    extensions.injectParser(SparkSqlMLParser)
-    extensions.injectPlannerStrategy(TrainingStrategy)
+  override def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
+    case f: Training => TrainingExec(f, PlanLater(f.child)) :: Nil
+    case _ => Nil
   }
-
 }
