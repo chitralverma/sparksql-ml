@@ -17,17 +17,11 @@
 package com.github.chitralverma.spark.sql.ml
 
 import com.github.chitralverma.spark.sql.ml.parser.SparkSqlMLParser
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SparkSessionExtensions
 
-object Implicits {
+class SparkSqlMLExtensions extends (SparkSessionExtensions => Unit) {
 
-  implicit class SparkSessionImplicits(sparkBuilder: SparkSession.Builder) {
-
-    def withSqlMLExtensions(): SparkSession.Builder = {
-      sparkBuilder.withExtensions { extensions =>
-        extensions.injectParser((_, parser) => new SparkSqlMLParser(parser))
-      }
-    }
-  }
+  override def apply(extensions: SparkSessionExtensions): Unit =
+    extensions.injectParser(SparkSqlMLParser)
 
 }
