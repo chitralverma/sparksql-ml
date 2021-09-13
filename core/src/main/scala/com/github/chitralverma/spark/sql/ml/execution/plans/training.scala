@@ -16,9 +16,11 @@
 
 package com.github.chitralverma.spark.sql.ml.execution.plans
 
+import com.github.chitralverma.spark.sql.ml._
+import com.github.chitralverma.spark.sql.ml.execution.utils.TrainingUtils
 import io.netty.util.internal.StringUtil
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{Row, SparkSession, SparkSqlUtils}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeSet}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
@@ -31,8 +33,7 @@ final case class Training(
   dataSetQuery: LogicalPlan,
   location: String,
   shouldOverwrite: Boolean,
-  options: Map[String, String] = Map.empty,
-  hyperParams: Map[String, String] = Map.empty,
+  params: Map[String, String] = Map.empty,
   output: Seq[Attribute])
     extends UnaryNode {
 
@@ -44,13 +45,28 @@ final case class Training(
 
   assert(dataSetQuery != null, "Provided data set query could not be parsed.")
 
-  assert(options.nonEmpty, "No options (featuresCol, labelCol, etc.) were provided.")
-
   assert(
     !StringUtil.isNullOrEmpty(estimatorStr),
     s"Invalid string '$estimatorStr' provided for Estimator.")
 
-  def run(): Seq[Row] = Row(estimatorStr, location) :: Nil
+  def run(sparkSession: SparkSession, child: SparkPlan): Seq[Row] = {
+    val estimator = TrainingUtils.getEstimatorToFit(estimatorStr, params)
+
+    val dataset = SparkSqlUtils.getDataFrameFromSparkPlan(
+      sparkSession,
+      child,
+      dataSetQuery.isStreaming)
+
+    val model = estimator.fit(dataset)
+    val mlWriter = if (shouldOverwrite) model.write.overwrite() else model.write
+
+    val allParams: Map[String, String] =
+      model.extractParamMap().toSeq.map(x => (x.param.name, x.value.toString)).toMap
+
+    mlWriter.save(location)
+
+    Row(estimator, model, location, allParams) :: Nil
+  }
 
 }
 
@@ -60,9 +76,9 @@ final case class TrainingExec(cmd: Training, child: SparkPlan) extends UnaryExec
 
   protected lazy val sideEffectResult: Seq[InternalRow] = {
     val converter = CatalystTypeConverters.createToCatalystConverter(schema)
-    val rows = cmd.run()
+    val rows = cmd.run(sqlContext.sparkSession, child)
 
-    rows.map(converter(_).asInstanceOf[InternalRow])
+    rows.map(converter(_).as[InternalRow])
   }
 
   override def output: Seq[Attribute] = cmd.output

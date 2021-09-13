@@ -48,8 +48,7 @@ givenStatement
 mlStatement
     : mlQuery                                                                                       #mlStatementDefault
     | ctes? fitEstimatorHeader TO '(' dataSetQuery=queryNoInsert ')'
-        (WITH OPTIONS options=tablePropertyList)? (WITH HYPERPARAMS hyperParams=tablePropertyList)?
-        storedAtLocation                                                                            #fitEstimator
+        (WITH PARAMS params=tablePropertyList)? storedAtLocation                                    #fitEstimator
     ;
 
 mlQuery
@@ -81,5 +80,4 @@ storedAtLocation
 //============================
 FIT: 'FIT';
 ESTIMATOR: 'ESTIMATOR';
-HYPERPARAMS: 'HYPERPARAMS';
-DEFAULT: 'DEFAULT';
+PARAMS: 'PARAMS';

@@ -38,6 +38,7 @@
 
 package com.github.chitralverma.spark.sql.ml.parser
 
+import com.github.chitralverma.spark.sql.ml._
 import com.github.chitralverma.spark.sql.ml.execution.plans.Training
 import com.github.chitralverma.spark.sql.ml.parser.SparkSqlMLBaseParser._
 import io.netty.util.internal.StringUtil
@@ -45,12 +46,12 @@ import org.antlr.v4.runtime.ParserRuleContext
 import org.antlr.v4.runtime.misc.Interval
 import org.antlr.v4.runtime.tree.{ParseTree, RuleNode}
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.parser.ParserUtils._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.command.ExplainCommand
-import org.apache.spark.sql.types.StringType
+import org.apache.spark.sql.SparkSqlUtils
+import org.apache.spark.sql.types._
 
 import java.util.Locale
 import scala.collection.JavaConverters._
@@ -64,8 +65,7 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
     extends SparkSqlMLBaseBaseVisitor[AnyRef]
     with Logging {
 
-  protected def typedVisit[T](ctx: ParseTree): T =
-    ctx.accept(this).asInstanceOf[T]
+  protected def typedVisit[T](ctx: ParseTree): T = ctx.accept(this).as[T]
 
   protected def plan(tree: ParserRuleContext): LogicalPlan = typedVisit(tree)
 
@@ -274,12 +274,8 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
       val (shouldOverwrite, estimatorStr) =
         visitFitEstimatorHeader(ctx.fitEstimatorHeader())
 
-      // Get any arbitrary options if provided
-      val options = Option(ctx.options).map(visitPropertyKeyValues).getOrElse(Map.empty)
-
-      // Get any hyper parameters if provided
-      val hyperParams =
-        Option(ctx.hyperParams).map(visitPropertyKeyValues).getOrElse(Map.empty)
+      // Get any parameters or options if provided
+      val params = Option(ctx.params).map(visitPropertyKeyValues).getOrElse(Map.empty)
 
       // Get value for location
       val location = Try(string(ctx.storedAtLocation().locationSpec().STRING())) match {
@@ -294,18 +290,15 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
         case Success(value) => value
       }
 
-      val outputAttributes = Seq(
-        AttributeReference("model", StringType, nullable = false)(),
-        AttributeReference("model_location", StringType, nullable = false)())
+      val schema = new StructType()
+        .add("estimator", MLEstimatorType, nullable = false)
+        .add("model", MLModelType, nullable = false)
+        .add("model_location", StringType, nullable = false)
+        .add("model_params", MapType(StringType, StringType), nullable = false)
 
-      Training(
-        estimatorStr,
-        dataset,
-        location,
-        shouldOverwrite,
-        options,
-        hyperParams,
-        outputAttributes)
+      val outputAttributes = SparkSqlUtils.schemaToAttributes(schema)
+
+      Training(estimatorStr, dataset, location, shouldOverwrite, params, outputAttributes)
     }
 
   implicit class ParserRuleContextImplicits(ctx: ParserRuleContext) {
