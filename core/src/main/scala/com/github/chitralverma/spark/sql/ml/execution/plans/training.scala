@@ -18,7 +18,6 @@ package com.github.chitralverma.spark.sql.ml.execution.plans
 
 import com.github.chitralverma.spark.sql.ml._
 import com.github.chitralverma.spark.sql.ml.execution.utils.TrainingUtils
-import io.netty.util.internal.StringUtil
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{Row, SparkSession, SparkSqlUtils}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow}
@@ -29,10 +28,9 @@ import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
 import org.apache.spark.sql.execution.metric.SQLMetric
 
 final case class Training(
-  estimatorStr: String,
+  estimatorClass: Class[MLEstimator],
   dataSetQuery: LogicalPlan,
-  location: String,
-  shouldOverwrite: Boolean,
+  writeSpecsOpt: Option[(Boolean, String)],
   params: Map[String, String] = Map.empty,
   output: Seq[Attribute])
     extends UnaryNode {
@@ -45,12 +43,10 @@ final case class Training(
 
   assert(dataSetQuery != null, "Provided data set query could not be parsed.")
 
-  assert(
-    !StringUtil.isNullOrEmpty(estimatorStr),
-    s"Invalid string '$estimatorStr' provided for Estimator.")
+  assert(!dataSetQuery.isStreaming, "Streaming data set queries are not supported.")
 
   def run(sparkSession: SparkSession, child: SparkPlan): Seq[Row] = {
-    val estimator = TrainingUtils.getEstimatorToFit(estimatorStr, params)
+    val estimator = TrainingUtils.getEstimatorToFit(estimatorClass, params)
 
     val dataset = SparkSqlUtils.getDataFrameFromSparkPlan(
       sparkSession,
@@ -58,12 +54,21 @@ final case class Training(
       dataSetQuery.isStreaming)
 
     val model = estimator.fit(dataset)
-    val mlWriter = if (shouldOverwrite) model.write.overwrite() else model.write
+    val allParams: Map[String, String] = model
+      .extractParamMap()
+      .toSeq
+      .map(paramPair => (paramPair.param.name, paramPair.value.toString))
+      .toMap
 
-    val allParams: Map[String, String] =
-      model.extractParamMap().toSeq.map(x => (x.param.name, x.value.toString)).toMap
+    val location = writeSpecsOpt match {
+      case Some((shouldOverwrite, location)) =>
+        val mlWriter = if (shouldOverwrite) model.write.overwrite() else model.write
 
-    mlWriter.save(location)
+        mlWriter.save(location)
+        location
+
+      case None => null
+    }
 
     Row(estimator, model, location, allParams) :: Nil
   }

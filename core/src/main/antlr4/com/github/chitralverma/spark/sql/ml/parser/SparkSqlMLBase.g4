@@ -40,15 +40,15 @@ grammar SparkSqlMLBase;
 import SqlBase;
 
 givenStatement
-    : singleStatement                                                                               #sparkSQLStatement
-    | mlStatement                                                                                   #sparkSQLMLStatement
+    : mlStatement                                                                                   #sparkSQLMLStatement
     | EXPLAIN (LOGICAL | FORMATTED | EXTENDED | CODEGEN | COST)? mlStatement                        #explainMLStatement
+    | singleStatement                                                                               #sparkSQLStatement
     ;
 
 mlStatement
     : mlQuery                                                                                       #mlStatementDefault
-    | ctes? fitEstimatorHeader TO '(' dataSetQuery=queryNoInsert ')'
-        (WITH PARAMS params=tablePropertyList)? storedAtLocation                                    #fitEstimator
+    | ctes? FIT estimator=STRING ESTIMATOR (WITH PARAMS params=tablePropertyList)?
+      TO '(' dataSetQuery=queryNoInsert ')' (writeAtLocation)?                                      #fitEstimator
     ;
 
 mlQuery
@@ -63,16 +63,12 @@ mlNamedQuery
     : name=identifier AS? '(' mlStatement ')'
     ;
 
-fitEstimatorHeader
-    : FIT (AND overwrite=REPLACE)? estimator=STRING ESTIMATOR
-    ;
-
 queryNoInsert
     : ctes? queryTerm queryOrganization
     ;
 
-storedAtLocation
-    : STORED AT locationSpec
+writeAtLocation
+    : AND writeMode=(WRITE|OVERWRITE) AT locationSpec
     ;
 
 //============================
@@ -81,3 +77,4 @@ storedAtLocation
 FIT: 'FIT';
 ESTIMATOR: 'ESTIMATOR';
 PARAMS: 'PARAMS';
+WRITE: 'WRITE';

@@ -31,8 +31,14 @@ object TrainingUtils extends Logging {
     getClassOf(className, fromSet = trainEstimators)
 
   def getEstimatorToFit(className: String, params: Map[String, String]): MLEstimator = {
-    val cls = getTrainEstimatorClass(className)
-    val estimator = cls.getConstructor().newInstance()
+    val estimatorCls = getTrainEstimatorClass(className)
+    getEstimatorToFit(estimatorCls, params)
+  }
+
+  def getEstimatorToFit(
+    estimatorCls: Class[MLEstimator],
+    params: Map[String, String]): MLEstimator = {
+    val estimator = estimatorCls.getConstructor().newInstance()
 
     val estimatorParams: Map[String, ParamPair[_]] = estimator
       .extractParamMap()
@@ -49,7 +55,7 @@ object TrainingUtils extends Logging {
         case (None, (key, _)) =>
           logWarning(
             s"Omitting parameter with name '$key' as it is not applicable " +
-              s"for estimator '${cls.getSimpleName}'.")
+              s"for estimator '${estimatorCls.getSimpleName}'.")
           Option.empty[ParamPair[_]]
       }
       .toSeq

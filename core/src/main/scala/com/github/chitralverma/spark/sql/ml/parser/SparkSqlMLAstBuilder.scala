@@ -40,17 +40,18 @@ package com.github.chitralverma.spark.sql.ml.parser
 
 import com.github.chitralverma.spark.sql.ml._
 import com.github.chitralverma.spark.sql.ml.execution.plans.Training
+import com.github.chitralverma.spark.sql.ml.execution.utils.TrainingUtils.getTrainEstimatorClass
 import com.github.chitralverma.spark.sql.ml.parser.SparkSqlMLBaseParser._
 import io.netty.util.internal.StringUtil
 import org.antlr.v4.runtime.ParserRuleContext
 import org.antlr.v4.runtime.misc.Interval
 import org.antlr.v4.runtime.tree.{ParseTree, RuleNode}
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.SparkSqlUtils
 import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.parser.ParserUtils._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.command.ExplainCommand
-import org.apache.spark.sql.SparkSqlUtils
 import org.apache.spark.sql.types._
 
 import java.util.Locale
@@ -228,27 +229,6 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
   //////////////////////////////////////////////////////////////////////////////////////////////
 
   /**
-   * Visit a parse tree produced by `SparkSqlMLBaseParser.fitEstimatorHeader`.
-   * Deals with provided values for `org.apache.spark.ml.Estimator` and `SaveMode`
-   *
-   * @param ctx the parse tree
-   * @return the visitor result
-   */
-  override def visitFitEstimatorHeader(
-    ctx: FitEstimatorHeaderContext): (Boolean, String) = {
-    val shouldOverwrite = Option(ctx.overwrite).isDefined
-    val estimatorName = Option(ctx.estimator) match {
-      case None =>
-        operationNotAllowed(
-          "Malformed input provided for estimator name. Null or Empty values are not allowed.",
-          ctx)
-      case Some(value) => string(value)
-    }
-
-    (shouldOverwrite, estimatorName)
-  }
-
-  /**
    * Visitor method to create a ML estimator with default hyper parameters.
    *
    * @groupname estimator_creation
@@ -256,6 +236,20 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
    */
   override def visitFitEstimator(ctx: FitEstimatorContext): LogicalPlan =
     withOrigin(ctx) {
+      // Get estimator type as string
+      val estimatorType = Try(string(ctx.estimator)).toOption match {
+        case null | Some(StringUtil.EMPTY_STRING) | None =>
+          operationNotAllowed(
+            "Malformed input provided for estimator. Null or Empty values are not allowed.",
+            ctx)
+        case Some(value) => value
+      }
+
+      // Get class for provided estimator type string
+      val estimatorCls = Try(getTrainEstimatorClass(estimatorType)) match {
+        case Success(cls) => cls
+        case Failure(exception) => throw exception
+      }
 
       // Get provided query as logical plan with CTEs
       val dataset = visitQueryNoInsert(ctx.dataSetQuery).optionalMap(ctx.ctes()) {
@@ -270,35 +264,45 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
           With(datasetQuery, ctes)
       }
 
-      // Get values for estimator and save mode
-      val (shouldOverwrite, estimatorStr) =
-        visitFitEstimatorHeader(ctx.fitEstimatorHeader())
-
       // Get any parameters or options if provided
       val params = Option(ctx.params).map(visitPropertyKeyValues).getOrElse(Map.empty)
 
-      // Get value for location
-      val location = Try(string(ctx.storedAtLocation().locationSpec().STRING())) match {
-        case Failure(exception) =>
-          operationNotAllowed(
-            s"Malformed input provided for location. Failed with message '${exception.getMessage}'",
-            ctx)
-        case Success(value) if StringUtil.isNullOrEmpty(value) =>
-          operationNotAllowed(
-            "Malformed input provided for location. Null or Empty values are not allowed.",
-            ctx)
-        case Success(value) => value
-      }
+      // Get write-specs (should overwrite, write location etc.) if defined
 
+      val writeSpecsOpt = if (Option(ctx.writeAtLocation).isDefined) {
+        // Check if save mode is overwrite
+        val shouldOverwrite = Try(
+          ctx.writeAtLocation.writeMode.getText.toLowerCase(Locale.ROOT)).toOption match {
+          case Some(value) if "overwrite".equalsIgnoreCase(value) => true
+          case _ => false
+        }
+
+        // Get value for location
+        val location = Try(string(ctx.writeAtLocation.locationSpec().STRING())) match {
+          case Failure(exception) =>
+            operationNotAllowed(
+              "Malformed input provided for location. " +
+                s"Failed with message '${exception.getMessage}'",
+              ctx)
+          case Success(value) if StringUtil.isNullOrEmpty(value) =>
+            operationNotAllowed(
+              "Malformed input provided for location. Null or Empty values are not allowed.",
+              ctx)
+          case Success(value) => value
+        }
+
+        Some((shouldOverwrite, location))
+      } else None
+
+      // Fixed output schema for Training queries
       val schema = new StructType()
         .add("estimator", MLEstimatorType, nullable = false)
         .add("model", MLModelType, nullable = false)
-        .add("model_location", StringType, nullable = false)
+        .add("model_location", StringType, nullable = true)
         .add("model_params", MapType(StringType, StringType), nullable = false)
 
       val outputAttributes = SparkSqlUtils.schemaToAttributes(schema)
-
-      Training(estimatorStr, dataset, location, shouldOverwrite, params, outputAttributes)
+      Training(estimatorCls, dataset, writeSpecsOpt, params, outputAttributes)
     }
 
   implicit class ParserRuleContextImplicits(ctx: ParserRuleContext) {
