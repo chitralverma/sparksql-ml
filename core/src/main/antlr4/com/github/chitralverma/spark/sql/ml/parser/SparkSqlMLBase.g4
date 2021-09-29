@@ -49,6 +49,8 @@ mlStatement
     : mlQuery                                                                                       #mlStatementDefault
     | ctes? FIT estimator=STRING ESTIMATOR (WITH PARAMS params=tablePropertyList)?
       TO '(' dataSetQuery=queryNoInsert ')' (writeAtLocation)?                                      #fitEstimator
+    | SHOW ESTIMATOR LIST (EXTENDED)?                                                               #showEstimators
+    | SHOW PARAMS FOR ESTIMATOR estimator=STRING                                                #showEstimatorParams
     ;
 
 mlQuery

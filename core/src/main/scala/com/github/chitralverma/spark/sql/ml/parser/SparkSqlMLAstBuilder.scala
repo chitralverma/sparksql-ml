@@ -39,11 +39,11 @@
 package com.github.chitralverma.spark.sql.ml.parser
 
 import com.github.chitralverma.spark.sql.ml._
-import com.github.chitralverma.spark.sql.ml.execution.plans.Training
+import com.github.chitralverma.spark.sql.ml.execution.plans._
 import com.github.chitralverma.spark.sql.ml.execution.utils.TrainingUtils.getTrainEstimatorClass
 import com.github.chitralverma.spark.sql.ml.parser.SparkSqlMLBaseParser._
 import io.netty.util.internal.StringUtil
-import org.antlr.v4.runtime.ParserRuleContext
+import org.antlr.v4.runtime.{ParserRuleContext, Token}
 import org.antlr.v4.runtime.misc.Interval
 import org.antlr.v4.runtime.tree.{ParseTree, RuleNode}
 import org.apache.spark.internal.Logging
@@ -231,25 +231,13 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
   /**
    * Visitor method to create a ML estimator with default hyper parameters.
    *
-   * @groupname estimator_creation
+   * @groupname ml_training
    * @param ctx the parse tree
    */
   override def visitFitEstimator(ctx: FitEstimatorContext): LogicalPlan =
     withOrigin(ctx) {
-      // Get estimator type as string
-      val estimatorType = Try(string(ctx.estimator)).toOption match {
-        case null | Some(StringUtil.EMPTY_STRING) | None =>
-          operationNotAllowed(
-            "Malformed input provided for estimator. Null or Empty values are not allowed.",
-            ctx)
-        case Some(value) => value
-      }
-
-      // Get class for provided estimator type string
-      val estimatorCls = Try(getTrainEstimatorClass(estimatorType)) match {
-        case Success(cls) => cls
-        case Failure(exception) => throw exception
-      }
+      // Get estimator class
+      val estimatorCls = getEstimatorClassFromToken(ctx.estimator, ctx)
 
       // Get provided query as logical plan with CTEs
       val dataset = visitQueryNoInsert(ctx.dataSetQuery).optionalMap(ctx.ctes()) {
@@ -304,6 +292,57 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
       val outputAttributes = SparkSqlUtils.schemaToAttributes(schema)
       Training(estimatorCls, dataset, writeSpecsOpt, params, outputAttributes)
     }
+
+  /**
+   * Create a [[ShowEstimatorListCommand]] logical plan.
+ *
+   * @groupname ml_general
+   * @example
+   * {{{
+   *   SHOW ESTIMATOR LIST [EXTENDED];
+   * }}}
+   */
+  override def visitShowEstimators(ctx: ShowEstimatorsContext): LogicalPlan = {
+    val isExtended = Option(ctx.EXTENDED()).isDefined
+    ShowEstimatorListCommand(isExtended)
+  }
+
+  /**
+   * Create a [[ShowEstimatorParamsCommand]] logical plan.
+   *
+   * @groupname ml_general
+   * @example
+   * {{{
+   *   SHOW PARAMS FOR ESTIMATOR 'LinearRegression';
+   * }}}
+   */
+  override def visitShowEstimatorParams(ctx: ShowEstimatorParamsContext): LogicalPlan = {
+    // Get estimator class
+    val estimatorCls = getEstimatorClassFromToken(ctx.estimator, ctx)
+    ShowEstimatorParamsCommand(estimatorCls)
+  }
+
+  /**
+   * Get estimator type as string and then get class for provided estimator type string
+   */
+  private def getEstimatorClassFromToken(
+    token: Token,
+    ctx: ParserRuleContext): Class[MLEstimator] = {
+    val estimatorType = Try(string(token)).toOption match {
+      case None | Some(StringUtil.EMPTY_STRING) | None =>
+        operationNotAllowed(
+          "Malformed input provided for estimator. Null or Empty values are not allowed.",
+          ctx)
+      case Some(value) => value
+    }
+
+    val estimatorCls = Try(getTrainEstimatorClass(estimatorType)) match {
+      case Success(cls) => cls
+      case Failure(exception) => throw exception
+    }
+
+    estimatorCls
+  }
 
   implicit class ParserRuleContextImplicits(ctx: ParserRuleContext) {
 

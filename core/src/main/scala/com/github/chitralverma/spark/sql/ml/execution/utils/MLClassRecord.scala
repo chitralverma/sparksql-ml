@@ -28,19 +28,23 @@ final case class MLClassRecord(cls: Class[_]) {
   private val pkg = cls.getPackage.getName
 
   val className: String = cls.getSimpleName
-  val classType: MLEnums.MLEnum = getType
+  val (classType, classCategory) = getTypeAndCategory
   val isInternal: Boolean = pkg.startsWith(SparkMLPackage)
-  val isTrain: Boolean = classType match {
+  val isTrain: Boolean = classCategory match {
     case MLEnums.train | MLEnums.other => true
     case _ => false
   }
 
-  private def getType = pkg.split("\\.").last match {
-    case "recommendation" | "regression" | "classification" | "clustering" =>
-      MLEnums.train
-    case s if s.endsWith("Classifier") || s.endsWith("Regressor") => MLEnums.train
-    case "feature" => MLEnums.feature
-    case "tuning" => MLEnums.tuning
-    case _ => MLEnums.other
+  private def getTypeAndCategory = pkg.split("\\.").last match {
+    case "feature" => (None, MLEnums.feature)
+    case "tuning" => (None, MLEnums.tuning)
+    case t @ ("recommendation" | "regression" | "classification" | "clustering") =>
+      (Some(t), MLEnums.train)
+    case _ if className.endsWith("Classifier") || className.endsWith("Classification") =>
+      (Some("classification"), MLEnums.train)
+    case _ if className.endsWith("Regressor") || className.endsWith("Regression") =>
+      (Some("regression"), MLEnums.train)
+    case _ => (None, MLEnums.other)
   }
+
 }

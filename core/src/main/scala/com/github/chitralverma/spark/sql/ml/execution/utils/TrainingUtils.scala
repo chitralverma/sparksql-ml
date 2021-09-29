@@ -25,10 +25,11 @@ import scala.util.{Failure, Success, Try}
 
 object TrainingUtils extends Logging {
 
-  private val trainEstimators: Set[MLClassRecord] = allEstimators.filter(_.isTrain)
+  private[ml] val trainEstimatorClasses: Set[MLClassRecord] =
+    allEstimators.filter(_.isTrain)
 
   def getTrainEstimatorClass(className: String): Class[MLEstimator] =
-    getClassOf(className, fromSet = trainEstimators)
+    getClassOf(className, fromSet = trainEstimatorClasses)
 
   def getEstimatorToFit(className: String, params: Map[String, String]): MLEstimator = {
     val estimatorCls = getTrainEstimatorClass(className)
