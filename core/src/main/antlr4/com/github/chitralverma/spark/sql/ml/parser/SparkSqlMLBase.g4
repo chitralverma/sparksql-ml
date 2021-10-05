@@ -50,7 +50,8 @@ mlStatement
     | ctes? FIT estimator=STRING ESTIMATOR (WITH PARAMS params=tablePropertyList)?
       TO '(' dataSetQuery=queryNoInsert ')' (writeAtLocation)?                                      #fitEstimator
     | SHOW ESTIMATOR LIST (EXTENDED)?                                                               #showEstimators
-    | SHOW PARAMS FOR ESTIMATOR estimator=STRING                                                #showEstimatorParams
+    | SHOW PARAMS FOR ESTIMATOR estimator=STRING                                                    #showEstimatorParams
+    | PREDICT FOR '(' dataSetQuery=queryNoInsert ')' USING MODEL STORED AT locationSpec             #generatePredictions
     ;
 
 mlQuery
@@ -80,3 +81,5 @@ FIT: 'FIT';
 ESTIMATOR: 'ESTIMATOR';
 PARAMS: 'PARAMS';
 WRITE: 'WRITE';
+PREDICT: 'PREDICT';
+MODEL: 'MODEL';

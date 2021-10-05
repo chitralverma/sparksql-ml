@@ -47,7 +47,9 @@ import org.antlr.v4.runtime.{ParserRuleContext, Token}
 import org.antlr.v4.runtime.misc.Interval
 import org.antlr.v4.runtime.tree.{ParseTree, RuleNode}
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.SparkSqlUtils
+import org.apache.spark.ml.SparkMLUtils
+import org.apache.spark.sql.{SparkSession, SparkSqlUtils}
+import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.parser.ParserUtils._
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -62,7 +64,7 @@ import scala.util.{Failure, Success, Try}
  * @groupname estimator_creation Visitor Functions for Estimator Creation
  * @param delegate original SparkSql parser to fallback on for non-ML queries
  */
-class SparkSqlMLAstBuilder(val delegate: ParserInterface)
+class SparkSqlMLAstBuilder(val delegate: ParserInterface, sparkSession: SparkSession)
     extends SparkSqlMLBaseBaseVisitor[AnyRef]
     with Logging {
 
@@ -229,6 +231,28 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
   //////////////////////////////////////////////////////////////////////////////////////////////
 
   /**
+   * Get estimator type as string and then get class for provided estimator type string
+   */
+  private def getEstimatorClassFromToken(
+    token: Token,
+    ctx: ParserRuleContext): Class[MLEstimator] = {
+    val estimatorType = Try(string(token)).toOption match {
+      case None | Some(StringUtil.EMPTY_STRING) | None =>
+        operationNotAllowed(
+          "Malformed input provided for estimator. Null or Empty values are not allowed.",
+          ctx)
+      case Some(value) => value
+    }
+
+    val estimatorCls = Try(getTrainEstimatorClass(estimatorType)) match {
+      case Success(cls) => cls
+      case Failure(exception) => throw exception
+    }
+
+    estimatorCls
+  }
+
+  /**
    * Visitor method to create a ML estimator with default hyper parameters.
    *
    * @groupname ml_training
@@ -295,7 +319,7 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
 
   /**
    * Create a [[ShowEstimatorListCommand]] logical plan.
- *
+   *
    * @groupname ml_general
    * @example
    * {{{
@@ -323,25 +347,50 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface)
   }
 
   /**
-   * Get estimator type as string and then get class for provided estimator type string
+   * Generates predictions for a given dataset using stored model.
+   *
+   * @groupname ml_prediction
+   * @example
+   * {{{
+   *   PREDICT FOR (SELECT * FROM mlDataset) USING MODEL STORED AT LOCATION '/tmp/model/';
+   * }}}
    */
-  private def getEstimatorClassFromToken(
-    token: Token,
-    ctx: ParserRuleContext): Class[MLEstimator] = {
-    val estimatorType = Try(string(token)).toOption match {
-      case None | Some(StringUtil.EMPTY_STRING) | None =>
+  override def visitGeneratePredictions(ctx: GeneratePredictionsContext): AnyRef = {
+    // Get provided query as logical plan with CTEs
+    val dataset = visitQueryNoInsert(ctx.dataSetQuery)
+
+    // Get value for location
+    val location = Try(string(ctx.locationSpec().STRING())) match {
+      case Failure(exception) =>
         operationNotAllowed(
-          "Malformed input provided for estimator. Null or Empty values are not allowed.",
+          "Malformed input provided for location. " +
+            s"Failed with message '${exception.getMessage}'",
           ctx)
-      case Some(value) => value
+      case Success(value) if StringUtil.isNullOrEmpty(value) =>
+        operationNotAllowed(
+          "Malformed input provided for location. Null or Empty values are not allowed.",
+          ctx)
+      case Success(value) => value
     }
 
-    val estimatorCls = Try(getTrainEstimatorClass(estimatorType)) match {
-      case Success(cls) => cls
-      case Failure(exception) => throw exception
+    val model: MLModel =
+      Try[MLModel](SparkMLUtils.loadModel(location, sparkSession)) match {
+        case Failure(exception) =>
+          throw new IllegalStateException(
+            s"MLModel could not be loaded from given location '$location'",
+            exception)
+        case Success(m) => m
+      }
+
+    val inputSchema =
+      SparkSqlUtils.getDataFrameFromLogicalPlan(sparkSession, dataset).schema
+    val finalSchema = model.transformSchema(inputSchema)
+
+    val outputAttributes = finalSchema.diff(inputSchema).map { f =>
+      AttributeReference(f.name, f.dataType, f.nullable, f.metadata)()
     }
 
-    estimatorCls
+    Prediction(dataset, model, outputAttributes)
   }
 
   implicit class ParserRuleContextImplicits(ctx: ParserRuleContext) {

@@ -14,17 +14,19 @@
  *   limitations under the License.
  */
 
-package com.github.chitralverma.spark.sql.ml
+package org.apache.spark.ml
 
-import com.github.chitralverma.spark.sql.ml.execution.strategies.SparkMLStrategies
-import com.github.chitralverma.spark.sql.ml.parser.SparkSqlMLParser
-import org.apache.spark.sql.SparkSessionExtensions
+import com.github.chitralverma.spark.sql.ml.MLModel
+import org.apache.spark.ml.util.DefaultParamsReader
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.SparkContext
 
-class SparkSqlMLExtensions extends (SparkSessionExtensions => Unit) {
+object SparkMLUtils {
 
-  override def apply(extensions: SparkSessionExtensions): Unit = {
-    extensions.injectParser(SparkSqlMLParser)
-    extensions.injectPlannerStrategy(SparkMLStrategies)
-  }
+  def loadModel(location: String, sparkSession: SparkSession): MLModel =
+    loadModel(location, sparkSession.sparkContext)
+
+  def loadModel(location: String, sparkContext: SparkContext): MLModel =
+    DefaultParamsReader.loadParamsInstance[MLModel](location, sparkContext)
 
 }

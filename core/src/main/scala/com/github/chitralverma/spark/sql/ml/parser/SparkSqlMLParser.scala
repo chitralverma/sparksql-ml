@@ -54,7 +54,8 @@ final case class SparkSqlMLParser(sparkSession: SparkSession, delegate: ParserIn
     extends ParserInterface
     with Logging {
 
-  private lazy val astBuilder: SparkSqlMLAstBuilder = new SparkSqlMLAstBuilder(delegate)
+  private lazy val astBuilder: SparkSqlMLAstBuilder =
+    new SparkSqlMLAstBuilder(delegate, sparkSession)
 
   /**
    * Parse a string to a [[LogicalPlan]].

@@ -16,15 +16,17 @@
 
 package com.github.chitralverma.spark.sql.ml.execution.strategies
 
-import com.github.chitralverma.spark.sql.ml.execution.plans.{Training, TrainingExec}
+import com.github.chitralverma.spark.sql.ml.execution.plans._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.{PlanLater, SparkPlan, SparkStrategy}
 
-final case class TrainingStrategy(spark: SparkSession) extends SparkStrategy {
+final case class SparkMLStrategies(spark: SparkSession) extends SparkStrategy {
 
   override def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
-    case f: Training => TrainingExec(f, PlanLater(f.child)) :: Nil
+    case p: Training => TrainingExec(p, PlanLater(p.child)) :: Nil
+    case p: Prediction => PredictionExec(p, PlanLater(p.child)) :: Nil
     case _ => Nil
   }
+
 }
