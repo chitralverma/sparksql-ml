@@ -88,6 +88,22 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface, sparkSession: SparkSes
     }
   }
 
+  override def visitMlCommandDefault(ctx: MlCommandDefaultContext): LogicalPlan =
+    withOrigin(ctx) {
+      plan(ctx.mlCommand())
+    }
+
+  override def visitMlStatementDefault(ctx: MlStatementDefaultContext): LogicalPlan =
+    withOrigin(ctx) {
+      plan(ctx.mlStatement())
+    }
+
+  override def visitSparkSQLFollowup(ctx: SparkSQLFollowupContext): LogicalPlan =
+    withOrigin(ctx) {
+      val query = delegate.parsePlan(ctx.queryNoWith().getOriginalString)
+      getDataSetWithCTEs(ctx, query, ctx.mlCtes())
+    }
+
   /**
    * Enables support of CTEs with SparkSQLML queries and the provided dataset queries.
    * Create [[With]] logical plan(s) which can alias the results of whole ML Query(-ies) or
@@ -99,22 +115,28 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface, sparkSession: SparkSes
    * {{{ FIT ... TO (WITH DATA AS (<data set query>) SELECT * FROM DATA) ... }}}
    * {{{ WITH MODEL AS ( FIT ... TO (SELECT * FROM DATA) ... ) SELECT * FROM MODEL }}}
    */
-  override def visitMlQuery(ctx: MlQueryContext): LogicalPlan =
-    withOrigin(ctx) {
-      val query = delegate.parsePlan(ctx.statement().getOriginalString)
+  private def getDataSetWithCTEs(
+    ctx: ParserRuleContext,
+    query: LogicalPlan,
+    mlCtes: MlCtesContext): LogicalPlan = withOrigin(ctx) {
+    // Apply CTEs
+    query.optional(mlCtes) {
+      val ctes = mlCtes.someNamedQuery().asScala.map { nCtx =>
+        val namedQuery = visitSomeNamedQuery(nCtx)
 
-      // Apply CTEs
-      query.optional(ctx.mlCtes()) {
-        val ctes = ctx.mlCtes.mlNamedQuery().asScala.map { nCtx =>
-          val namedQuery = visitMlNamedQuery(nCtx)
-
-          (namedQuery.alias, namedQuery)
-        }
-
-        // Check for duplicate names.
-        checkDuplicateKeys(ctes, ctx)
-        With(query, ctes)
+        (namedQuery.alias, namedQuery)
       }
+
+      // Check for duplicate names.
+      checkDuplicateKeys(ctes, ctx)
+      With(query, ctes)
+    }
+  }
+
+  override def visitSomeNamedQuery(ctx: SomeNamedQueryContext): SubqueryAlias =
+    withOrigin(ctx) {
+      if (Option(ctx.mlNamedQuery()).isDefined) visitMlNamedQuery(ctx.mlNamedQuery())
+      else visitNamedQuery(ctx.namedQuery())
     }
 
   override def visitNamedQuery(ctx: NamedQueryContext): SubqueryAlias = withOrigin(ctx) {
@@ -126,27 +148,7 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface, sparkSession: SparkSes
    */
   override def visitMlNamedQuery(ctx: MlNamedQueryContext): SubqueryAlias =
     withOrigin(ctx) {
-      SubqueryAlias(ctx.name.getText, plan(ctx.mlStatement()))
-    }
-
-  /**
-   * Create an [[ExplainCommand]] logical plan.
-   * The syntax of using this command in SQL is:
-   * {{{ EXPLAIN (EXTENDED | CODEGEN) <SparkSQLML Statement> }}}
-   */
-  override def visitExplainMLStatement(ctx: ExplainMLStatementContext): LogicalPlan =
-    withOrigin(ctx) {
-      Option(ctx.FORMATTED).foreach(_ => operationNotAllowed("EXPLAIN FORMATTED", ctx))
-      Option(ctx.LOGICAL).foreach(_ => operationNotAllowed("EXPLAIN LOGICAL", ctx))
-
-      Option(plan(ctx.mlStatement()))
-        .map(stmt =>
-          ExplainCommand(
-            logicalPlan = stmt,
-            extended = ctx.EXTENDED != null,
-            codegen = ctx.CODEGEN != null,
-            cost = ctx.COST != null))
-        .orNull
+      SubqueryAlias(ctx.name.getText, plan(ctx.mlCommand()))
     }
 
   /**
@@ -209,26 +211,23 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface, sparkSession: SparkSes
   /**
    * Create a logical plan for a regular (no-insert) query
    */
-  override def visitQueryNoInsert(queryCtx: QueryNoInsertContext): LogicalPlan = {
-    val dataSetQueryStr = Try(queryCtx.getOriginalString) match {
-      case Failure(exception) =>
-        operationNotAllowed(
-          s"Invalid SQL query provided. Failed with message '${exception.getMessage}'",
-          queryCtx.getParent)
-      case Success(value) if StringUtil.isNullOrEmpty(value) =>
-        operationNotAllowed(
-          "Invalid SQL query provided. Null or Empty values are not allowed.",
-          queryCtx.getParent)
-      case Success(value) if Option(value).isDefined => value
+  override def visitQueryNoInsert(queryCtx: QueryNoInsertContext): LogicalPlan =
+    withOrigin(queryCtx) {
+      val dataSetQueryStr = Try(queryCtx.getOriginalString) match {
+        case Failure(exception) =>
+          operationNotAllowed(
+            s"Invalid SQL query provided. Failed with message '${exception.getMessage}'",
+            queryCtx.getParent)
+        case Success(value) if StringUtil.isNullOrEmpty(value) =>
+          operationNotAllowed(
+            "Invalid SQL query provided. Null or Empty values are not allowed.",
+            queryCtx.getParent)
+        case Success(value) if Option(value).isDefined => value
+      }
+
+      logDebug("Delegating the provided dataset query to SparkSQLParser.")
+      delegate.parsePlan(dataSetQueryStr)
     }
-
-    logDebug("Delegating the provided dataset query to SparkSQLParser.")
-    delegate.parsePlan(dataSetQueryStr)
-  }
-
-  //////////////////////////////////////////////////////////////////////////////////////////////
-  // Handling SparkSql-ML queries
-  //////////////////////////////////////////////////////////////////////////////////////////////
 
   /**
    * Get estimator type as string and then get class for provided estimator type string
@@ -252,6 +251,34 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface, sparkSession: SparkSes
     estimatorCls
   }
 
+  //////////////////////////////////////////////////////////////////////////////////////////////
+  // Handling SparkSql-ML Commands
+  //////////////////////////////////////////////////////////////////////////////////////////////
+
+  /**
+   * Create an [[ExplainCommand]] logical plan.
+   *
+   * @groupname ml_general
+   * @example
+   * {{{
+   * EXPLAIN [LOGICAL | FORMATTED | EXTENDED | CODEGEN | COST] <ML Command>
+   * }}}
+   */
+  override def visitExplainMLCommand(ctx: ExplainMLCommandContext): LogicalPlan =
+    withOrigin(ctx) {
+      Option(ctx.FORMATTED).foreach(_ => operationNotAllowed("EXPLAIN FORMATTED", ctx))
+      Option(ctx.LOGICAL).foreach(_ => operationNotAllowed("EXPLAIN LOGICAL", ctx))
+
+      Option(plan(ctx.mlCommand()))
+        .map(stmt =>
+          ExplainCommand(
+            logicalPlan = stmt,
+            extended = ctx.EXTENDED != null,
+            codegen = ctx.CODEGEN != null,
+            cost = ctx.COST != null))
+        .orNull
+    }
+
   /**
    * Visitor method to create a ML estimator with default hyper parameters.
    *
@@ -264,17 +291,8 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface, sparkSession: SparkSes
       val estimatorCls = getEstimatorClassFromToken(ctx.estimator, ctx)
 
       // Get provided query as logical plan with CTEs
-      val dataset = visitQueryNoInsert(ctx.dataSetQuery).optionalMap(ctx.ctes()) {
-        (ctesContext: CtesContext, datasetQuery: LogicalPlan) =>
-          val ctes = ctesContext.namedQuery().asScala.map { nCtx =>
-            val namedQuery = visitNamedQuery(nCtx)
-            (namedQuery.alias, namedQuery)
-          }
-
-          // Check for duplicate names.
-          checkDuplicateKeys(ctes, ctx)
-          With(datasetQuery, ctes)
-      }
+      val dataset =
+        getDataSetWithCTEs(ctx, visitQueryNoInsert(ctx.dataSetQuery), ctx.mlCtes())
 
       // Get any parameters or options if provided
       val params = Option(ctx.params).map(visitPropertyKeyValues).getOrElse(Map.empty)
@@ -355,43 +373,46 @@ class SparkSqlMLAstBuilder(val delegate: ParserInterface, sparkSession: SparkSes
    *   PREDICT FOR (SELECT * FROM mlDataset) USING MODEL STORED AT LOCATION '/tmp/model/';
    * }}}
    */
-  override def visitGeneratePredictions(ctx: GeneratePredictionsContext): AnyRef = {
-    // Get provided query as logical plan with CTEs
-    val dataset = visitQueryNoInsert(ctx.dataSetQuery)
+  override def visitGeneratePredictions(ctx: GeneratePredictionsContext): LogicalPlan =
+    withOrigin(ctx) {
+      // Get provided query as logical plan with CTEs
+      val dataset =
+        getDataSetWithCTEs(ctx, visitQueryNoInsert(ctx.dataSetQuery), ctx.mlCtes())
 
-    // Get value for location
-    val location = Try(string(ctx.locationSpec().STRING())) match {
-      case Failure(exception) =>
-        operationNotAllowed(
-          "Malformed input provided for location. " +
-            s"Failed with message '${exception.getMessage}'",
-          ctx)
-      case Success(value) if StringUtil.isNullOrEmpty(value) =>
-        operationNotAllowed(
-          "Malformed input provided for location. Null or Empty values are not allowed.",
-          ctx)
-      case Success(value) => value
-    }
-
-    val model: MLModel =
-      Try[MLModel](SparkMLUtils.loadModel(location, sparkSession)) match {
+      // Get value for location
+      val location = Try(string(ctx.locationSpec().STRING())) match {
         case Failure(exception) =>
-          throw new IllegalStateException(
-            s"MLModel could not be loaded from given location '$location'",
-            exception)
-        case Success(m) => m
+          operationNotAllowed(
+            "Malformed input provided for location. " +
+              s"Failed with message '${exception.getMessage}'",
+            ctx)
+        case Success(value) if StringUtil.isNullOrEmpty(value) =>
+          operationNotAllowed(
+            "Malformed input provided for location. Null or Empty values are not allowed.",
+            ctx)
+        case Success(value) => value
       }
 
-    val inputSchema =
-      SparkSqlUtils.getDataFrameFromLogicalPlan(sparkSession, dataset).schema
-    val finalSchema = model.transformSchema(inputSchema)
+      val model: MLModel =
+        Try[MLModel](SparkMLUtils.loadModel(location, sparkSession)) match {
+          case Failure(exception) =>
+            throw new IllegalStateException(
+              s"MLModel could not be loaded from given location '$location'",
+              exception)
+          case Success(m) => m
+        }
 
-    val outputAttributes = finalSchema.diff(inputSchema).map { f =>
-      AttributeReference(f.name, f.dataType, f.nullable, f.metadata)()
+      val inputSchema =
+        SparkSqlUtils.getDataFrameFromLogicalPlan(sparkSession, dataset).schema
+
+      val finalSchema = model.transformSchema(inputSchema)
+
+      val outputAttributes = finalSchema.diff(inputSchema).map { f =>
+        AttributeReference(f.name, f.dataType, f.nullable, f.metadata)()
+      }
+
+      Prediction(dataset, model, outputAttributes)
     }
-
-    Prediction(dataset, model, outputAttributes)
-  }
 
   implicit class ParserRuleContextImplicits(ctx: ParserRuleContext) {
 

@@ -27,6 +27,20 @@ import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
 import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
 import org.apache.spark.sql.execution.metric.SQLMetric
 
+/**
+ * Logical plan for Training a [[MLModel]].
+ * Optionally, this trained model can also be persisted to a given location.
+ *
+ * @param estimatorClass class of [[MLEstimator]] which needs to be fit to given data set
+ * @param dataSetQuery [[LogicalPlan]] for the input data set
+ * @param writeSpecsOpt An [[Option]] describing write specs.
+ *                      The [[Boolean]] describes if persistence should be done in
+ *                      overwrite mode or not. The [[String]] refers to the location where
+ *                      the model should be persisted.
+ * @param params A map of hyper-params and/ or other options that can be applied
+ *               to the estimator before fitting it to the input data set
+ * @param output A [[Seq]] of attributes that can describes a basic output of training summary
+ */
 final case class Training(
   estimatorClass: Class[MLEstimator],
   dataSetQuery: LogicalPlan,
@@ -36,6 +50,8 @@ final case class Training(
     extends UnaryNode {
 
   lazy val metrics: Map[String, SQLMetric] = BasicWriteJobStatsTracker.metrics
+
+  override def maxRows: Option[Long] = Some(1L)
 
   override def references: AttributeSet = AttributeSet(dataSetQuery.flatMap(_.references))
 
@@ -75,6 +91,14 @@ final case class Training(
 
 }
 
+/**
+ * Physical plan for Training a [[MLModel]].
+ * If we change how this is implemented physically, [[Training.maxRows]]
+ * will have to be updated as well.
+ *
+ * @param cmd [[LogicalPlan]] for Training a [[MLModel]].
+ * @param child Physical Plan for the input data set
+ */
 final case class TrainingExec(cmd: Training, child: SparkPlan) extends UnaryExecNode {
 
   override lazy val metrics: Map[String, SQLMetric] = cmd.metrics

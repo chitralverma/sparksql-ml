@@ -54,18 +54,20 @@ final case class ShowEstimatorListCommand(isExtended: Boolean) extends RunnableC
   }
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    TrainingUtils.trainEstimatorClasses.map { c =>
-      val estimator = c.className
-      val estimatorClass = c.cls.getCanonicalName
-      val estimatorType = c.classType.getOrElse("others")
-      val isInternal = c.isInternal
+    TrainingUtils.trainEstimatorClasses.toSeq
+      .sortBy(_.className)
+      .map { c =>
+        val estimator = c.className
+        val estimatorClass = c.cls.getCanonicalName
+        val estimatorType = c.classType.getOrElse("others")
+        val isInternal = c.isInternal
 
-      if (isExtended) {
-        Row(estimator, estimatorClass, estimatorType, isInternal)
-      } else {
-        Row(estimator)
+        if (isExtended) {
+          Row(estimator, estimatorClass, estimatorType, isInternal)
+        } else {
+          Row(estimator)
+        }
       }
-    }.toSeq
   }
 }
 
@@ -100,8 +102,9 @@ final case class ShowEstimatorParamsCommand(estimatorClass: Class[MLEstimator])
       estimator.params.map(p => s"get${p.name}".toLowerCase(Locale.ROOT) -> p).toMap
 
     estimator.getClass.getMethods
-      .map(m => (m, params.get(m.getName.toLowerCase(Locale.ROOT))))
-      .flatMap(m => m._2.map(x => (x, m._1)))
+      .map(method => (method, params.get(method.getName.toLowerCase(Locale.ROOT))))
+      .flatMap(paramTuple => paramTuple._2.map(param => (param, paramTuple._1)))
+      .sortBy(_._1.name)
       .flatMap {
         case (param, method) =>
           val paramValue = estimator.getDefault(param).map(_.toString).orNull

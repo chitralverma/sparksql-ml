@@ -40,30 +40,34 @@ grammar SparkSqlMLBase;
 import SqlBase;
 
 givenStatement
-    : mlStatement                                                                                   #sparkSQLMLStatement
-    | EXPLAIN (LOGICAL | FORMATTED | EXTENDED | CODEGEN | COST)? mlStatement                        #explainMLStatement
-    | singleStatement                                                                               #sparkSQLStatement
+    : mlCommand EOF                                                                                 #mlCommandDefault
+    ;
+
+mlCommand
+    : mlStatement                                                                                   #mlStatementDefault
+    | EXPLAIN (LOGICAL | FORMATTED | EXTENDED | CODEGEN | COST)? mlCommand                          #explainMLCommand
+    | SHOW ESTIMATOR LIST (EXTENDED)?                                                               #showEstimators
+    | SHOW PARAMS FOR ESTIMATOR estimator=STRING                                                    #showEstimatorParams
     ;
 
 mlStatement
-    : mlQuery                                                                                       #mlStatementDefault
-    | ctes? FIT estimator=STRING ESTIMATOR (WITH PARAMS params=tablePropertyList)?
-      TO '(' dataSetQuery=queryNoInsert ')' (writeAtLocation)?                                      #fitEstimator
-    | SHOW ESTIMATOR LIST (EXTENDED)?                                                               #showEstimators
-    | SHOW PARAMS FOR ESTIMATOR estimator=STRING                                                    #showEstimatorParams
-    | PREDICT FOR '(' dataSetQuery=queryNoInsert ')' USING MODEL STORED AT locationSpec             #generatePredictions
-    ;
-
-mlQuery
-    : mlCtes? statement
+    : mlCtes? FIT estimator=STRING ESTIMATOR (WITH PARAMS params=tablePropertyList)?
+            TO '(' dataSetQuery=queryNoInsert ')' (writeAtLocation)?                                #fitEstimator
+    | mlCtes? PREDICT FOR '(' dataSetQuery=queryNoInsert ')' USING MODEL STORED AT locationSpec     #generatePredictions
+    | mlCtes? queryNoWith                                                                           #sparkSQLFollowup
     ;
 
 mlCtes
-    : WITH mlNamedQuery (',' mlNamedQuery)*
+    : WITH someNamedQuery (',' someNamedQuery)*
+    ;
+
+someNamedQuery
+    : mlNamedQuery
+    | namedQuery
     ;
 
 mlNamedQuery
-    : name=identifier AS? '(' mlStatement ')'
+    : name=identifier AS? '(' mlCommand ')'
     ;
 
 queryNoInsert
